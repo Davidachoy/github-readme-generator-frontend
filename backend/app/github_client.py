@@ -40,7 +40,13 @@ async def _get_json(
     if response.status_code >= 400:
         detail = None
         try:
-            detail = response.json().get("message")
+            body = response.json()
+            detail = body.get("message") or response.text
+            if response.status_code == 403 and "rate limit" in (detail or "").lower():
+                detail = (
+                    "Límite de la API de GitHub alcanzado. "
+                    "Configura GITHUB_TOKEN en tu .env (token de GitHub con permisos de lectura) y reinicia el backend para aumentar el límite."
+                )
         except ValueError:
             detail = response.text
 
@@ -147,7 +153,8 @@ async def fetch_profile_data(username: str) -> dict:
         languages = _build_language_list(lang_totals)
 
         repos_payload = [_format_repo(repo) for repo in owned_repos[:REPO_RESULT_LIMIT]]
-        top_languages = languages[:10]
+        # Contract: top_languages is [string, number][] for frontend and readme_builder
+        top_languages = [[item["name"], item["bytes"]] for item in languages[:10]]
 
         stats = {
             "followers": user.get("followers"),
@@ -163,6 +170,8 @@ async def fetch_profile_data(username: str) -> dict:
             "username": user.get("login", username),
             "name": user.get("name"),
             "bio": user.get("bio"),
+            "followers": user.get("followers"),
+            "public_repos": user.get("public_repos"),
             "avatar_url": user.get("avatar_url"),
             "profile_url": user.get("html_url"),
             "stats": stats,

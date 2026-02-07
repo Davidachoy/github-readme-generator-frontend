@@ -31,12 +31,39 @@ SECTION_TITLES = {
     "charts": "Charts",
 }
 
+# Plantillas que definen secciones por defecto y títulos
+TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "minimal": {
+        "sections": ["header", "bio", "repos"],
+        "titles": {"bio": "About", "repos": "Projects"},
+    },
+    "professional": {
+        "sections": ["header", "badges", "bio", "stats", "languages", "repos", "charts"],
+        "titles": {"badges": "Badges", "bio": "About", "stats": "Statistics", "languages": "Languages", "repos": "Repositories", "charts": "Activity"},
+    },
+    "creative": {
+        "sections": ["header", "badges", "bio", "stats", "languages", "repos", "charts"],
+        "titles": {"badges": "🔗 Links", "bio": "👋 About me", "stats": "📊 Stats", "languages": "💻 Languages", "repos": "⭐ Projects", "charts": "📈 Activity"},
+    },
+}
+
 
 def build_readme(profile_data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     config = config or {}
+    # Aplicar plantilla si se especifica
+    template_name = (config.get("template") or "").strip().lower()
+    if template_name in TEMPLATES:
+        t = TEMPLATES[template_name]
+        config = dict(config)
+        if "titles" not in config or not config["titles"]:
+            config["titles"] = dict(t.get("titles") or {})
+        else:
+            config["titles"] = {**(t.get("titles") or {}), **config["titles"]}
     sections = _normalize_sections(config.get("sections"))
     if not sections:
-        sections = list(DEFAULT_SECTIONS)
+        sections = list(TEMPLATES.get(template_name, {}).get("sections", DEFAULT_SECTIONS) if template_name else DEFAULT_SECTIONS)
+        if not sections:
+            sections = list(DEFAULT_SECTIONS)
 
     lines: List[str] = []
     assets: Dict[str, Any] = {}
@@ -152,11 +179,13 @@ def _section_repos(profile_data: Dict[str, Any], config: Dict[str, Any]) -> List
     if max_repos is not None and max_repos > 0:
         repos = repos[:max_repos]
 
-    layout = config.get("layout") or "default"
+    layout = (config.get("layout") or "default").lower()
     show_stats = config.get("show_repo_stats")
     if show_stats is None:
-        show_stats = layout != "compact"
+        show_stats = layout not in ("compact", "compacto")
 
+    if layout == "table":
+        return _section_repos_table(repos, show_stats=bool(show_stats))
     lines = []
     for repo in repos:
         if not isinstance(repo, dict):
@@ -165,6 +194,46 @@ def _section_repos(profile_data: Dict[str, Any], config: Dict[str, Any]) -> List
         if formatted:
             lines.append(f"- {formatted}")
     return lines
+
+
+def _html_escape(s: str) -> str:
+    """Escapa caracteres para uso seguro en HTML."""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _section_repos_table(repos: List[Dict[str, Any]], show_stats: bool = True) -> List[str]:
+    """Repos en tabla HTML (GitHub la renderiza bien). Columnas: Repository, Description, Language."""
+    if not repos:
+        return []
+    rows: List[List[str]] = []
+    for repo in repos:
+        if not isinstance(repo, dict):
+            continue
+        name = repo.get("name") or "repo"
+        url = repo.get("url") or "#"
+        cell_name = f'<a href="{_html_escape(url)}">{_html_escape(name)}</a>'
+        desc = (repo.get("description") or "").strip()
+        desc = _html_escape(desc) if desc else "—"
+        if len(desc) > 60:
+            desc = desc[:57] + "..."
+        lang = (repo.get("language") or "").strip()
+        lang = _html_escape(lang) if lang else "—"
+        rows.append([cell_name, desc, lang])
+    if not rows:
+        return []
+    header = "<thead><tr><th>Repository</th><th>Description</th><th>Language</th></tr></thead>"
+    body_rows = "".join(
+        f"<tr><td>{a}</td><td>{b}</td><td>{c}</td></tr>"
+        for a, b, c in rows
+    )
+    table = f"<table>{header}<tbody>{body_rows}</tbody></table>"
+    return [table]
 
 
 def _section_badges(profile_data: Dict[str, Any], config: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
 import './App.css'
 import {
   fetchProfile,
@@ -10,10 +11,31 @@ import {
   type ReadmeConfig,
 } from './api'
 
-type SectionKey = 'header' | 'stats' | 'languages' | 'repos' | 'badges' | 'charts'
+const IMAGE_PROXY_HOSTS = [
+  'github-readme-stats.vercel.app',
+  'github-readme-stats-fast.vercel.app',
+  'streak-stats.demolab.com',
+  'img.shields.io',
+]
+
+function imageSrcForPreview(src: string | undefined): string {
+  if (!src) return ''
+  try {
+    const u = new URL(src, window.location.origin)
+    if (IMAGE_PROXY_HOSTS.includes(u.hostname.toLowerCase())) {
+      return `/api/proxy-image?url=${encodeURIComponent(src)}`
+    }
+  } catch {
+    // URL inválida, devolver tal cual
+  }
+  return src
+}
+
+type SectionKey = 'header' | 'bio' | 'stats' | 'languages' | 'repos' | 'badges' | 'charts'
 
 const sectionLabels: Record<SectionKey, string> = {
   header: 'Header',
+  bio: 'About',
   stats: 'Stats',
   languages: 'Languages',
   repos: 'Repos',
@@ -23,12 +45,29 @@ const sectionLabels: Record<SectionKey, string> = {
 
 const defaultSections: Record<SectionKey, boolean> = {
   header: true,
+  bio: true,
   stats: true,
   languages: true,
   repos: true,
   badges: false,
   charts: false,
 }
+
+type TemplateId = 'minimal' | 'professional' | 'creative'
+
+const TEMPLATE_OPTIONS: { value: TemplateId; label: string; sections: Record<SectionKey, boolean> }[] = [
+  { value: 'minimal', label: 'Minimal (solo header, about, proyectos)', sections: { header: true, bio: true, stats: false, languages: false, repos: true, badges: false, charts: false } },
+  { value: 'professional', label: 'Professional (completo, títulos formales)', sections: { header: true, bio: true, stats: true, languages: true, repos: true, badges: true, charts: true } },
+  { value: 'creative', label: 'Creative (completo con emojis)', sections: { header: true, bio: true, stats: true, languages: true, repos: true, badges: true, charts: true } },
+]
+
+const LAYOUT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'default', label: 'Lista completa (con estrellas e idioma)' },
+  { value: 'compact', label: 'Lista compacta (solo enlaces)' },
+  { value: 'table', label: 'Tabla' },
+]
+
+const SECTION_ORDER: SectionKey[] = ['header', 'badges', 'bio', 'stats', 'languages', 'repos', 'charts']
 
 const formatNumber = (value?: number) => {
   if (typeof value !== 'number') return 'n/a'
@@ -68,19 +107,20 @@ function App() {
   const [markdown, setMarkdown] = useState('')
   const [assets, setAssets] = useState<Record<string, string> | null>(null)
   const [theme, setTheme] = useState('light')
-  const [layout, setLayout] = useState('stacked')
+  const [layout, setLayout] = useState('default')
+  const [template, setTemplate] = useState<TemplateId>('professional')
   const [sections, setSections] = useState<Record<SectionKey, boolean>>(
-    defaultSections,
+    TEMPLATE_OPTIONS[1].sections,
   )
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
+  const [showSections, setShowSections] = useState(false)
+  const [previewViewMode, setPreviewViewMode] = useState<'preview' | 'markdown'>('preview')
 
   const trimmedUsername = username.trim()
 
   const selectedSections = useMemo(
     () =>
-      Object.entries(sections)
-        .filter(([, enabled]) => enabled)
-        .map(([key]) => key),
+      SECTION_ORDER.filter((key) => sections[key]),
     [sections],
   )
 
@@ -89,9 +129,16 @@ function App() {
       sections: selectedSections,
       theme,
       layout,
+      template,
     }),
-    [selectedSections, theme, layout],
+    [selectedSections, theme, layout, template],
   )
+
+  const handleTemplateChange = (newTemplate: TemplateId) => {
+    setTemplate(newTemplate)
+    const option = TEMPLATE_OPTIONS.find((t) => t.value === newTemplate)
+    if (option) setSections(option.sections)
+  }
 
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -126,14 +173,15 @@ function App() {
     try {
       const result = await generateReadme(trimmedUsername, config)
       const nextMarkdown = getMarkdown(result)
-      if (!nextMarkdown) {
+      const nextAssets = getAssets(result)
+      if (typeof nextMarkdown !== 'string') {
         setGenerateError('Respuesta sin markdown.')
         setMarkdown('')
         setAssets(null)
         return
       }
       setMarkdown(nextMarkdown)
-      setAssets(getAssets(result))
+      setAssets(nextAssets && typeof nextAssets === 'object' ? nextAssets : null)
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Error al generar README.'
@@ -183,220 +231,169 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div>
-          <p className="app-eyebrow">GitHub Profile README</p>
-          <h1>Preview y export desde /api/profile y /api/generate</h1>
-          <p className="app-subtitle">
-            Consulta datos del perfil, configura secciones y genera Markdown.
-          </p>
-        </div>
-        <div className="app-meta">
-          <span className="meta-item">
-            Endpoint perfil: <code>/api/profile</code>
-          </span>
-          <span className="meta-item">
-            Endpoint generate: <code>/api/generate</code>
-          </span>
-        </div>
+        <h1>GitHub Profile README</h1>
+        <p className="app-subtitle">
+          Genera el markdown para el README de tu perfil en tres pasos.
+        </p>
       </header>
 
       <div className="layout">
         <div className="left-column">
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>1. Perfil</h2>
-                <p>Obtiene datos base desde GitHub.</p>
-              </div>
-            </div>
-            <form className="form-row" onSubmit={handleProfileSubmit}>
-              <div className="field">
-                <label htmlFor="username">GitHub username</label>
+          <section className="panel panel-main">
+            <div className="hero">
+              <label htmlFor="username" className="hero-label">Tu usuario de GitHub</label>
+              <form className="hero-form" onSubmit={handleProfileSubmit}>
                 <input
                   id="username"
                   type="text"
-                  placeholder="octocat"
+                  placeholder="ej. octocat"
                   value={username}
-                  onChange={(event) => setUsername(event.target.value)}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="hero-input"
                 />
-              </div>
-              <button
-                className="button primary"
-                type="submit"
-                disabled={!trimmedUsername || profileLoading}
-              >
-                {profileLoading ? 'Cargando...' : 'Cargar perfil'}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  className="button primary hero-btn"
+                  disabled={!trimmedUsername || profileLoading}
+                >
+                  {profileLoading ? 'Cargando…' : 'Cargar perfil'}
+                </button>
+              </form>
+            </div>
             {profileError && <p className="status error">{profileError}</p>}
-            {profileLoading && <p className="status info">Buscando perfil...</p>}
-
-            {!profile && !profileLoading && (
-              <p className="status empty">
-                Aun no hay perfil cargado. Usa el formulario para consultar uno.
-              </p>
-            )}
 
             {profile && (
-              <div className="profile-card">
-                <div className="profile-summary">
-                  <h3>{profileName}</h3>
-                  <p className="profile-username">@{profile.username}</p>
-                  <p className="profile-bio">{profileBio}</p>
+              <div className="profile-compact">
+                <div className="profile-compact-main">
+                  <strong>{profileName}</strong>
+                  <span className="profile-compact-username">@{profile.username}</span>
                 </div>
-                <div className="stats-grid">
-                  <div>
-                    <span>Followers</span>
-                    <strong>{formatNumber(profile.followers)}</strong>
-                  </div>
-                  <div>
-                    <span>Public repos</span>
-                    <strong>{formatNumber(profile.public_repos)}</strong>
-                  </div>
-                </div>
-                <div className="data-block">
-                  <h4>Top languages</h4>
-                  {topLanguages.length === 0 ? (
-                    <p className="status empty">Sin datos de lenguajes.</p>
-                  ) : (
-                    <ul className="pill-list">
-                      {topLanguages.map(([language, bytes]) => (
-                        <li key={language}>
-                          <span>{language}</span>
-                          <strong>{formatBytes(bytes)}</strong>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className="data-block">
-                  <h4>Repos</h4>
-                  {repos.length === 0 ? (
-                    <p className="status empty">Sin repos destacados.</p>
-                  ) : (
-                    <ul className="repo-list">
-                      {repos.map((repo) => (
-                        <li key={repo.url}>
-                          <div>
-                            <a
-                              href={repo.url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {repo.name}
-                            </a>
-                            {repo.description && (
-                              <p className="repo-description">
-                                {repo.description}
-                              </p>
-                            )}
-                          </div>
-                          <div className="repo-meta">
-                            {repo.language && <span>{repo.language}</span>}
-                            <span>Stars {formatNumber(repo.stars)}</span>
-                            <span>Forks {formatNumber(repo.forks)}</span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+                <p className="profile-compact-bio">{profileBio}</p>
+                <div className="profile-compact-stats">
+                  <span>{formatNumber(profile.followers)} seguidores</span>
+                  <span className="dot">·</span>
+                  <span>{formatNumber(profile.public_repos)} repos</span>
+                  {topLanguages.length > 0 && (
+                    <>
+                      <span className="dot">·</span>
+                      <span>{topLanguages.slice(0, 3).map(([l]) => l).join(', ')}</span>
+                    </>
                   )}
                 </div>
               </div>
             )}
-          </section>
 
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>2. Configuracion</h2>
-                <p>Selecciona tema, layout y secciones.</p>
-              </div>
-            </div>
-            <div className="form-row">
-              <div className="field">
-                <label htmlFor="theme">Theme</label>
+            <div className="options-row">
+              <div className="option-group">
+                <label htmlFor="template">Plantilla</label>
                 <select
-                  id="theme"
-                  value={theme}
-                  onChange={(event) => setTheme(event.target.value)}
+                  id="template"
+                  value={template}
+                  onChange={(e) => handleTemplateChange(e.target.value as TemplateId)}
                 >
-                  <option value="light">light</option>
-                  <option value="dark">dark</option>
-                  <option value="auto">auto</option>
+                  {TEMPLATE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
-              <div className="field">
-                <label htmlFor="layout">Layout</label>
-                <select
-                  id="layout"
-                  value={layout}
-                  onChange={(event) => setLayout(event.target.value)}
-                >
-                  <option value="stacked">stacked</option>
-                  <option value="two-column">two-column</option>
-                  <option value="grid">grid</option>
+              <div className="option-group">
+                <label htmlFor="theme">Tema</label>
+                <select id="theme" value={theme} onChange={(e) => setTheme(e.target.value)}>
+                  <option value="light">Claro</option>
+                  <option value="dark">Oscuro</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </div>
+              <div className="option-group">
+                <label htmlFor="layout">Repos</label>
+                <select id="layout" value={layout} onChange={(e) => setLayout(e.target.value)}>
+                  {LAYOUT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
             </div>
-            <div className="sections-grid">
-              {Object.entries(sectionLabels).map(([key, label]) => (
-                <label className="checkbox" key={key}>
-                  <input
-                    type="checkbox"
-                    checked={sections[key as SectionKey]}
-                    onChange={() => toggleSection(key as SectionKey)}
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </div>
-            <div className="actions">
+
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowSections(!showSections)}
+              aria-expanded={showSections}
+            >
+              {showSections ? 'Ocultar secciones' : 'Personalizar secciones'}
+            </button>
+            {showSections && (
+              <div className="sections-grid">
+                {SECTION_ORDER.map((key) => (
+                  <label className="checkbox" key={key}>
+                    <input
+                      type="checkbox"
+                      checked={sections[key]}
+                      onChange={() => toggleSection(key)}
+                    />
+                    <span>{sectionLabels[key]}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <div className="actions-main">
+              <form onSubmit={(e) => { e.preventDefault(); handleGenerate() }} style={{ display: 'inline' }}>
+                <button
+                  type="submit"
+                  className="button primary btn-generate"
+                  disabled={!trimmedUsername || generateLoading}
+                >
+                  {generateLoading ? 'Generando…' : 'Generar README'}
+                </button>
+              </form>
               <button
-                className="button primary"
                 type="button"
-                onClick={handleGenerate}
-                disabled={!trimmedUsername || generateLoading}
-              >
-                {generateLoading ? 'Generando...' : 'Generar README'}
-              </button>
-              <button
                 className="button secondary"
-                type="button"
-                onClick={() => {
-                  setMarkdown('')
-                  setAssets(null)
-                  setGenerateError(null)
-                }}
+                onClick={() => { setMarkdown(''); setAssets(null); setGenerateError(null) }}
               >
-                Limpiar preview
+                Limpiar
               </button>
             </div>
             {generateError && <p className="status error">{generateError}</p>}
-            <div className="config-preview">
-              <h3>Config enviada</h3>
-              <pre>{JSON.stringify({ username: trimmedUsername, config }, null, 2)}</pre>
-            </div>
           </section>
         </div>
 
         <section className="panel preview-panel">
-          <div className="panel-header">
-            <div>
-              <h2>3. Previsualizacion</h2>
-              <p>Resultado de la generacion en Markdown.</p>
-            </div>
+          <div className="preview-header">
+            <h2>Vista previa</h2>
             <div className="toolbar">
+              <div className="preview-view-switch" role="tablist" aria-label="Vista">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={previewViewMode === 'preview'}
+                  className={previewViewMode === 'preview' ? 'tab active' : 'tab'}
+                  onClick={() => setPreviewViewMode('preview')}
+                >
+                  Vista previa
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={previewViewMode === 'markdown'}
+                  className={previewViewMode === 'markdown' ? 'tab active' : 'tab'}
+                  onClick={() => setPreviewViewMode('markdown')}
+                >
+                  Markdown
+                </button>
+              </div>
               <button
-                className="button ghost"
                 type="button"
+                className="button ghost"
                 onClick={handleCopy}
                 disabled={!markdown}
               >
-                Copiar
+                {copyStatus === 'Copiado.' ? '✓ Copiado' : 'Copiar'}
               </button>
               <button
-                className="button ghost"
                 type="button"
+                className="button ghost"
                 onClick={handleDownload}
                 disabled={!markdown}
               >
@@ -404,36 +401,68 @@ function App() {
               </button>
             </div>
           </div>
-          {copyStatus && <p className="status info">{copyStatus}</p>}
-          <div className="preview-box">
-            {markdown ? (
-              <ReactMarkdown className="markdown-body">
-                {markdown}
-              </ReactMarkdown>
-            ) : (
-              <p className="status empty">
-                Aun no hay markdown generado. Ejecuta la generacion.
-              </p>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="markdown">Markdown</label>
-            <textarea id="markdown" readOnly rows={12} value={markdown} />
-          </div>
+
+          {previewViewMode === 'preview' && (
+            <div className="preview-box">
+              {markdown ? (
+                <div className="markdown-body">
+                  <ReactMarkdown
+                    rehypePlugins={[rehypeRaw]}
+                    components={{
+                      img: ({ src, alt, ...props }) => (
+                        <img
+                          {...props}
+                          src={imageSrcForPreview(src)}
+                          alt={alt ?? ''}
+                          referrerPolicy="no-referrer"
+                          loading="lazy"
+                        />
+                      ),
+                    }}
+                  >
+                    {markdown}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <p className="status empty">
+                  Carga tu usuario y pulsa «Generar README» para ver la vista previa.
+                </p>
+              )}
+            </div>
+          )}
+
+          {previewViewMode === 'markdown' && (
+            <div className="markdown-edit-box">
+              <textarea
+                id="markdown-edit"
+                aria-label="Editar markdown"
+                rows={18}
+                value={markdown}
+                onChange={(e) => setMarkdown(e.target.value)}
+                className="field textarea-editable"
+                placeholder="Genera el README para cargar el markdown aquí, o edítalo manualmente."
+              />
+              <button
+                type="button"
+                className="button primary btn-recompile"
+                onClick={() => setPreviewViewMode('preview')}
+              >
+                Actualizar vista previa
+              </button>
+            </div>
+          )}
+
           {assets && Object.keys(assets).length > 0 && (
-            <div className="data-block">
-              <h4>Assets</h4>
+            <details className="assets-details">
+              <summary>Assets generados</summary>
               <ul className="asset-list">
                 {Object.entries(assets).map(([name, url]) => (
                   <li key={name}>
-                    <span>{name}</span>
-                    <a href={url} target="_blank" rel="noreferrer">
-                      {url}
-                    </a>
+                    <a href={url} target="_blank" rel="noreferrer">{name}</a>
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </section>
       </div>

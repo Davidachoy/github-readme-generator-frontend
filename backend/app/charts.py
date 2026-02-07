@@ -5,6 +5,10 @@ from urllib.parse import urlencode
 
 DEFAULT_CHARTS: tuple[str, ...] = ("stats", "top_languages")
 
+# Fork con mejor disponibilidad que el original (menos rate limit en Vercel)
+# Ver: https://github.com/Pranesh-2005/github-readme-stats-fast
+STATS_API_BASE = "https://github-readme-stats-fast.vercel.app"
+
 
 def _normalize_list(value: object, default: Iterable[str]) -> list[str]:
     if value is None:
@@ -61,7 +65,7 @@ def build_stats_chart(
     if theme:
         params["theme"] = theme
     params = _merge_params(params, cfg, reserved=("alt",))
-    url = _build_url("https://github-readme-stats.vercel.app/api", params)
+    url = _build_url(f"{STATS_API_BASE}/api", params)
     alt = str(cfg.get("alt") or "GitHub stats")
     return f"![{alt}]({url})"
 
@@ -87,7 +91,7 @@ def build_top_languages_chart(
     if theme:
         params["theme"] = theme
     params = _merge_params(params, cfg, reserved=("alt",))
-    url = _build_url("https://github-readme-stats.vercel.app/api/top-langs", params)
+    url = _build_url(f"{STATS_API_BASE}/api/top-langs", params)
     alt = str(cfg.get("alt") or "Top languages")
     return f"![{alt}]({url})"
 

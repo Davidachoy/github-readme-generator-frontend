@@ -21,6 +21,7 @@ export type ReadmeConfig = {
   sections: string[]
   theme: string
   layout: string
+  template?: string
 }
 
 export type GeneratedReadme = {
@@ -62,7 +63,7 @@ export const fetchProfile = async (username: string): Promise<ProfileData> => {
 export const generateReadme = async (
   username: string,
   config: ReadmeConfig,
-): Promise<GeneratedReadme | string> => {
+): Promise<GeneratedReadme> => {
   const res = await fetch(`${apiBase}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -71,5 +72,12 @@ export const generateReadme = async (
   if (!res.ok) {
     throw new Error(await readErrorMessage(res))
   }
-  return (await res.json()) as GeneratedReadme | string
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    const text = await res.text()
+    throw new Error(
+      `El servidor devolvió ${contentType || 'respuesta vacía'} en lugar de JSON. ¿Está el backend en marcha en el puerto 8000?`,
+    )
+  }
+  return (await res.json()) as GeneratedReadme
 }

@@ -1,0 +1,16 @@
+# Create backend/.env from backend/.env.example and set GITHUB_TOKEN (optional; higher API rate limit).
+# Secrets are loaded only via env_file so they do not appear in `docker compose config`.
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
